@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/cors"
 	"github.com/joho/godotenv"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -50,6 +51,11 @@ func main() {
 
 	app := fiber.New()
 
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: []string{"http://localhost:5173"},
+		AllowHeaders: []string{"Origin", "Content-Type", "Accept"},
+	}))
+	
 	app.Get("/api/todos", getAllTodos)
 	app.Post("/api/todos", createTodo)
 	app.Patch("/api/todos/:id", updateTodo)
@@ -109,22 +115,32 @@ func createTodo(c fiber.Ctx) error {
 func updateTodo(c fiber.Ctx) error {
 	id := c.Params("id")
 	objectID, err := primitive.ObjectIDFromHex(id)
-
 	if err != nil {
-		c.Status(400).JSON(fiber.Map{"error": "Invalid todo ID"})
+		return c.Status(400).JSON(fiber.Map{"error": "Invalid todo ID"})
 	}
 
 	filter := bson.M{"_id": objectID}
-	update := bson.M{"$set": bson.M{"completed": true}}
 
-	_, err = collection.UpdateOne(context.Background(), filter, update)
-
+	// Retrieve the current todo
+	var todo struct {
+		Completed bool `bson:"completed"`
+	}
+	err = collection.FindOne(context.Background(), filter).Decode(&todo)
 	if err != nil {
-		return err
+		return c.Status(404).JSON(fiber.Map{"error": "Todo not found"})
 	}
 
-	return c.Status(200).JSON(fiber.Map{"success": true})
+	// Toggle completed status
+	update := bson.M{"$set": bson.M{"completed": !todo.Completed}}
+
+	_, err = collection.UpdateOne(context.Background(), filter, update)
+	if err != nil {
+		return c.Status(500).JSON(fiber.Map{"error": "Failed to update todo"})
+	}
+
+	return c.Status(200).JSON(fiber.Map{"success": true, "completed": !todo.Completed})
 }
+
 
 func deleteTodo(c fiber.Ctx) error {
 	id := c.Params("id")
